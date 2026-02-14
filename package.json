@@ -1,0 +1,19 @@
+{
+  "name": "meta-supervisor",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.1",
+    "chalk": "4",
+    "chokidar": "^5.0.0",
+    "elysia": "^1.4.25",
+    "simple-git": "^3.31.1"
+  }
+}
