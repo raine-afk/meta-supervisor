@@ -15,6 +15,12 @@ const SEVERITY_ICONS = {
   info: "🔵",
 };
 
+// Rules that come from semantic analysis
+const SEMANTIC_RULES = new Set([
+  "semantic-duplication",
+  "semantic-inconsistency",
+]);
+
 export class TUI {
   private agentLog: string[] = [];
   private findings: Finding[] = [];
@@ -64,26 +70,45 @@ export class TUI {
 
     console.log(chalk.dim(divider));
 
-    // Supervisor Findings
-    console.log(chalk.bold.green("\n  🔍 Supervisor Findings\n"));
-    if (this.findings.length === 0) {
-      console.log(chalk.dim("    No findings yet — all clear! ✅\n"));
+    // Supervisor Findings - split into rule-based and semantic
+    const ruleFindings = this.findings.filter((f) => !SEMANTIC_RULES.has(f.rule));
+    const semanticFindings = this.findings.filter((f) => SEMANTIC_RULES.has(f.rule));
+
+    console.log(chalk.bold.green("\n  🔍 Rule-Based Findings\n"));
+    if (ruleFindings.length === 0) {
+      console.log(chalk.dim("    No rule-based findings — all clear! ✅\n"));
     } else {
-      const recentFindings = this.findings.slice(-10);
+      const recentFindings = ruleFindings.slice(-8);
       for (const finding of recentFindings) {
-        const color = SEVERITY_COLORS[finding.severity];
-        const icon = SEVERITY_ICONS[finding.severity];
-        console.log(`    ${icon} ${color(`[${finding.severity.toUpperCase()}]`)} ${chalk.white(finding.message)}`);
-        console.log(`       ${chalk.dim(`${finding.file}${finding.line ? `:${finding.line}` : ""}`)} ${chalk.dim(`(${finding.rule})`)}`);
-        if (finding.suggestion) {
-          console.log(`       ${chalk.green(`💡 ${finding.suggestion}`)}`);
-        }
-        console.log();
+        this.printFinding(finding);
+      }
+    }
+
+    if (semanticFindings.length > 0) {
+      console.log(chalk.dim(divider));
+      console.log(chalk.bold.cyan("\n  🧠 Semantic Findings\n"));
+      const recentSemantic = semanticFindings.slice(-8);
+      for (const finding of recentSemantic) {
+        this.printFinding(finding);
       }
     }
 
     console.log(chalk.dim(divider));
     console.log(chalk.dim(`\n  ${this.watching ? "👀 Watching for changes..." : "⏹️  Idle"} | Press Ctrl+C to exit\n`));
+  }
+
+  private printFinding(finding: Finding): void {
+    const color = SEVERITY_COLORS[finding.severity];
+    const icon = SEVERITY_ICONS[finding.severity];
+    const isSemantic = SEMANTIC_RULES.has(finding.rule);
+    const prefix = isSemantic ? chalk.magenta("🧠 ") : "";
+
+    console.log(`    ${prefix}${icon} ${color(`[${finding.severity.toUpperCase()}]`)} ${chalk.white(finding.message)}`);
+    console.log(`       ${chalk.dim(`${finding.file}${finding.line ? `:${finding.line}` : ""}`)} ${chalk.dim(`(${finding.rule})`)}`);
+    if (finding.suggestion) {
+      console.log(`       ${chalk.green(`💡 ${finding.suggestion}`)}`);
+    }
+    console.log();
   }
 
   addAgentOutput(output: AgentOutput): void {
@@ -127,7 +152,6 @@ export class TUI {
 
   // Print a one-time finding report (non-interactive)
   printReport(findings: Finding[]): void {
-    const width = process.stdout.columns || 80;
     console.log(chalk.bold.magenta("\n  ═══ Meta-Agent Supervisor Report ═══\n"));
 
     if (findings.length === 0) {
@@ -138,18 +162,24 @@ export class TUI {
     const critical = findings.filter((f) => f.severity === "critical");
     const warnings = findings.filter((f) => f.severity === "warning");
     const info = findings.filter((f) => f.severity === "info");
+    const semantic = findings.filter((f) => SEMANTIC_RULES.has(f.rule));
+    const ruleBased = findings.filter((f) => !SEMANTIC_RULES.has(f.rule));
 
-    console.log(`  Summary: ${chalk.red.bold(`${critical.length} critical`)} | ${chalk.yellow(`${warnings.length} warnings`)} | ${chalk.cyan(`${info.length} info`)}\n`);
+    console.log(`  Summary: ${chalk.red.bold(`${critical.length} critical`)} | ${chalk.yellow(`${warnings.length} warnings`)} | ${chalk.cyan(`${info.length} info`)}${semantic.length > 0 ? ` | ${chalk.magenta(`${semantic.length} semantic`)}` : ""}\n`);
 
-    for (const finding of findings) {
-      const color = SEVERITY_COLORS[finding.severity];
-      const icon = SEVERITY_ICONS[finding.severity];
-      console.log(`  ${icon} ${color(`[${finding.severity.toUpperCase()}]`)} ${finding.message}`);
-      console.log(`     ${chalk.dim(`${finding.file}${finding.line ? `:${finding.line}` : ""}`)} ${chalk.dim(`(${finding.rule})`)}`);
-      if (finding.suggestion) {
-        console.log(`     ${chalk.green(`💡 ${finding.suggestion}`)}`);
+    // Print rule-based findings first
+    if (ruleBased.length > 0) {
+      for (const finding of ruleBased) {
+        this.printFinding(finding);
       }
-      console.log();
+    }
+
+    // Print semantic findings with a separator
+    if (semantic.length > 0) {
+      console.log(chalk.dim("  ── Semantic Analysis ──\n"));
+      for (const finding of semantic) {
+        this.printFinding(finding);
+      }
     }
   }
 }

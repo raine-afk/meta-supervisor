@@ -34,15 +34,9 @@ interface LLMConfig {
  */
 async function loadConfig(): Promise<LLMConfig | null> {
   // Try Modal API (OpenAI-compatible)
-  const modalKey = process.env.MODAL_API_KEY;
-  if (modalKey) {
-    return {
-      baseUrl: "https://api.us-west-2.modal.direct/v1",
-      model: "zai-org/GLM-5-FP8",
-      apiKey: modalKey,
-      provider: "openai-compat",
-    };
-  }
+  // Modal API disabled — frequently times out
+  // const modalKey = process.env.MODAL_API_KEY;
+  // if (modalKey) { ... }
 
   // Try Google Generative AI from openclaw config
   try {

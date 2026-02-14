@@ -5,10 +5,14 @@ import { PatternExtractor } from "../patterns/extractor";
 import { Supervisor, type Finding } from "../supervisor";
 import { SemanticStore } from "../embeddings/store";
 import { SemanticSupervisor } from "../supervisor/semantic";
+import { smartAnalyze } from "../supervisor/llm";
+import { TfIdfVectorizer } from "../embeddings";
 
-export function createAPI(store: PatternStore, supervisor: Supervisor, semanticStore?: SemanticStore) {
-  const semSupervisor = semanticStore ? new SemanticSupervisor(semanticStore) : null;
-
+export function createAPI(
+  store: PatternStore,
+  supervisor: Supervisor,
+  semanticStore?: SemanticStore
+) {
   const app = new Elysia()
     .use(cors())
     .get("/health", () => ({
@@ -16,29 +20,33 @@ export function createAPI(store: PatternStore, supervisor: Supervisor, semanticS
       service: "meta-supervisor",
       timestamp: new Date().toISOString(),
       patterns: store.getPatterns().length,
-      indexedChunks: semanticStore?.getStats().totalChunks ?? 0,
+      semanticChunks: semanticStore?.getStats().totalChunks ?? 0,
     }))
 
-    // Analyze code changes (rules + semantic)
+    // Analyze code changes
     .post("/analyze", ({ body }) => {
       const { code, filePath } = body as { code: string; filePath: string };
       if (!code || !filePath) {
         return { error: "code and filePath are required" };
       }
 
-      const ruleFindings = supervisor.analyzeCode(code, filePath);
-      const semFindings = semSupervisor?.analyzeFile(code, filePath) ?? [];
-      const allFindings = [...ruleFindings, ...semFindings];
+      // Rule-based findings
+      const findings = supervisor.analyzeCode(code, filePath);
+
+      // Semantic findings (if indexed)
+      if (semanticStore) {
+        const semanticSupervisor = new SemanticSupervisor(semanticStore);
+        const semanticFindings = semanticSupervisor.analyzeFile(code, filePath);
+        findings.push(...semanticFindings);
+      }
 
       return {
-        findings: allFindings,
+        findings,
         summary: {
-          total: allFindings.length,
-          critical: allFindings.filter((f: Finding) => f.severity === "critical").length,
-          warning: allFindings.filter((f: Finding) => f.severity === "warning").length,
-          info: allFindings.filter((f: Finding) => f.severity === "info").length,
-          rulesBased: ruleFindings.length,
-          semantic: semFindings.length,
+          total: findings.length,
+          critical: findings.filter((f: Finding) => f.severity === "critical").length,
+          warning: findings.filter((f: Finding) => f.severity === "warning").length,
+          info: findings.filter((f: Finding) => f.severity === "info").length,
         },
       };
     })
@@ -53,13 +61,18 @@ export function createAPI(store: PatternStore, supervisor: Supervisor, semanticS
       const extractor = new PatternExtractor(repoPath);
       const patterns = await extractor.extractAll(repoPath);
 
+      // Store learned patterns
       for (const p of patterns) {
         store.addPattern(p.pattern_type, p.pattern_value, p.confidence, p.examples, repoPath);
       }
 
+      // Update supervisor with new patterns
       supervisor.updatePatterns(store.getPatterns());
 
-      return { learned: patterns.length, patterns };
+      return {
+        learned: patterns.length,
+        patterns: patterns,
+      };
     })
 
     // Get all patterns
@@ -77,26 +90,39 @@ export function createAPI(store: PatternStore, supervisor: Supervisor, semanticS
       return { deleted: true };
     })
 
-    // Index a codebase for semantic search
+    // ── NEW: Semantic Search Endpoints ──
+
+    // Index a codebase
     .post("/index", async ({ body }) => {
       const { repoPath } = body as { repoPath: string };
-      if (!repoPath) return { error: "repoPath is required" };
-      if (!semanticStore) return { error: "Semantic store not available" };
+      if (!repoPath) {
+        return { error: "repoPath is required" };
+      }
+      if (!semanticStore) {
+        return { error: "Semantic store not initialized" };
+      }
 
-      const result = await semanticStore.indexCodebase(repoPath);
+      const logs: string[] = [];
+      const result = await semanticStore.indexCodebase(repoPath, (msg) => {
+        logs.push(msg);
+      });
+
       return {
-        indexed: true,
-        filesIndexed: result.filesIndexed,
-        chunksStored: result.chunksStored,
-        vocabulary: semanticStore.getVectorizer().vocabSize,
+        ...result,
+        logs,
+        stats: semanticStore.getStats(),
       };
     })
 
     // Semantic code search
     .post("/search", ({ body }) => {
       const { query, limit } = body as { query: string; limit?: number };
-      if (!query) return { error: "query is required" };
-      if (!semanticStore) return { error: "Semantic store not available" };
+      if (!query) {
+        return { error: "query is required" };
+      }
+      if (!semanticStore) {
+        return { error: "Semantic store not initialized" };
+      }
 
       const results = semanticStore.search(query, limit || 10);
       return {
@@ -105,36 +131,91 @@ export function createAPI(store: PatternStore, supervisor: Supervisor, semanticS
           file: r.chunk.file_path,
           type: r.chunk.chunk_type,
           name: r.chunk.chunk_name,
-          line: r.chunk.start_line,
-          similarity: Math.round(r.similarity * 100) / 100,
-          preview: r.chunk.chunk_content.slice(0, 200),
+          startLine: r.chunk.start_line,
+          endLine: r.chunk.end_line,
+          content: r.chunk.chunk_content,
+          similarity: r.similarity,
         })),
         total: results.length,
       };
     })
 
-    // Index stats
-    .get("/stats", () => {
-      const stats = semanticStore?.getStats() ?? { totalChunks: 0, totalFiles: 0, projects: [] };
+    // LLM-enhanced smart analysis
+    .post("/smart-analyze", async ({ body }) => {
+      const { code, filePath } = body as { code: string; filePath: string };
+      if (!code || !filePath) {
+        return { error: "code and filePath are required" };
+      }
+
+      const patterns = store.getPatterns();
+      const patternContext = patterns
+        .map((p) => `[${p.pattern_type}] ${p.pattern_value}`)
+        .join("\n");
+
+      const analysis = await smartAnalyze(code, filePath, {
+        projectPatterns: patternContext || undefined,
+      });
+
+      // Also get rule-based and semantic findings
+      const ruleFindings = supervisor.analyzeCode(code, filePath);
+      let semanticFindings: Finding[] = [];
+      if (semanticStore) {
+        const semanticSupervisor = new SemanticSupervisor(semanticStore);
+        semanticFindings = semanticSupervisor.analyzeFile(code, filePath);
+      }
+
       return {
-        patterns: store.getPatterns().length,
-        ...stats,
-        vocabulary: semanticStore?.getVectorizer().vocabSize ?? 0,
+        llmAnalysis: analysis,
+        ruleFindings,
+        semanticFindings,
+        combined: {
+          totalIssues:
+            analysis.issues.length +
+            ruleFindings.length +
+            semanticFindings.length,
+        },
       };
     })
 
-    // Stub ML endpoints (for teammates)
-    .post("/ml/embeddings", ({ body }) => ({
-      stub: true,
-      message: "ML embedding endpoint — to be implemented by ML team",
-      input: body,
-    }))
+    // ML embedding endpoint (now real!)
+    .post("/ml/embeddings", ({ body }) => {
+      if (!semanticStore) {
+        return { stub: true, message: "Semantic store not initialized" };
+      }
+      const { text } = body as { text: string };
+      if (!text) {
+        return { error: "text is required" };
+      }
+      const vectorizer = semanticStore.getVectorizer();
+      const embedding = vectorizer.embed(text);
+      return {
+        stub: false,
+        embedding: Array.from(embedding.data).slice(0, 50), // First 50 dims as preview
+        dim: embedding.dim,
+        vocabSize: vectorizer.vocabSize,
+      };
+    })
 
-    .post("/ml/similarity", ({ body }) => ({
-      stub: true,
-      message: "ML similarity endpoint — to be implemented by ML team",
-      similarity: 0.5,
-    }));
+    // ML similarity endpoint (now real!)
+    .post("/ml/similarity", ({ body }) => {
+      if (!semanticStore) {
+        return { stub: true, similarity: 0.5 };
+      }
+      const { text1, text2 } = body as { text1: string; text2: string };
+      if (!text1 || !text2) {
+        return { error: "text1 and text2 are required" };
+      }
+      const vectorizer = semanticStore.getVectorizer();
+      const vec1 = vectorizer.embed(text1);
+      const vec2 = vectorizer.embed(text2);
+      const similarity = TfIdfVectorizer.cosineSimilarity(vec1, vec2);
+      return {
+        stub: false,
+        similarity,
+        text1Length: text1.length,
+        text2Length: text2.length,
+      };
+    });
 
   return app;
 }
