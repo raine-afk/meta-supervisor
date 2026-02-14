@@ -1,19 +1,26 @@
 {
   "name": "meta-supervisor",
-  "module": "index.ts",
+  "version": "0.1.0",
+  "description": "Meta-Agent Supervisor — Watches over coding agents and catches mistakes in real-time",
   "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "serve": "bun run src/index.ts serve",
+    "demo": "bun run src/index.ts demo"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "bin": {
+    "meta-supervisor": "./src/index.ts"
   },
   "dependencies": {
     "@elysiajs/cors": "^1.4.1",
-    "chalk": "4",
+    "chalk": "^4.1.2",
     "chokidar": "^5.0.0",
     "elysia": "^1.4.25",
     "simple-git": "^3.31.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
   }
 }
