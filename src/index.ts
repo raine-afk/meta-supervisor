@@ -80,6 +80,9 @@ switch (command) {
   case "smart-analyze":
     await smartAnalyzeCommand(arg);
     break;
+  case "stats":
+    await statsCommand();
+    break;
   case "help":
   case "--help":
   case "-h":
@@ -614,4 +617,17 @@ const AuthService = require('./auth');
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function statsCommand() {
+  const stats = semanticStore.getStats();
+  const patterns = store.getPatterns();
+
+  console.log(chalk.blue("\n📊 Meta-Supervisor Stats\n"));
+  console.log(`  ${chalk.cyan("Patterns learned:")} ${patterns.length}`);
+  console.log(`  ${chalk.cyan("Code chunks indexed:")} ${stats.totalChunks}`);
+  console.log(`  ${chalk.cyan("Files indexed:")} ${stats.totalFiles}`);
+  console.log(`  ${chalk.cyan("Vocabulary size:")} ${semanticStore.getVectorizer().vocabSize} tokens`);
+  console.log(`  ${chalk.cyan("Projects:")} ${stats.projects.length > 0 ? stats.projects.join(", ") : "none"}`);
+  console.log();
 }
