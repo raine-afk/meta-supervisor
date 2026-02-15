@@ -201,6 +201,9 @@ async function superviseCommand(dir: string) {
     process.exit(1);
   }
 
+  const { resolve } = await import("path");
+  const resolvedDir = resolve(dir);
+
   const patterns = store.getPatterns();
   const supervisor = new Supervisor(patterns);
   const semanticSupervisor = new SemanticSupervisor(semanticStore);
@@ -209,7 +212,17 @@ async function superviseCommand(dir: string) {
   tui.updateStats({ patternsLoaded: patterns.length });
   tui.setWatching(true);
 
-  const watcher = new FileWatcher(dir);
+  const watcher = new FileWatcher(resolvedDir);
+
+  watcher.on("ready", () => {
+    tui.addAgentOutput({ type: "stdout", data: `✅ Watcher ready on: ${resolvedDir}`, timestamp: Date.now() } as any);
+    tui.render();
+  });
+
+  watcher.on("error", (err) => {
+    tui.addAgentOutput({ type: "stderr", data: `Watcher error: ${err}`, timestamp: Date.now() } as any);
+    tui.render();
+  });
 
   watcher.on("changes", (changes) => {
     for (const change of changes) {

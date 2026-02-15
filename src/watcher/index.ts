@@ -1,7 +1,7 @@
 import { watch } from "chokidar";
 import { readFile } from "fs/promises";
 import { EventEmitter } from "events";
-import { relative } from "path";
+import { relative, resolve } from "path";
 
 export interface FileChange {
   type: "add" | "change" | "unlink";
@@ -19,7 +19,7 @@ export class FileWatcher extends EventEmitter {
 
   constructor(targetDir: string) {
     super();
-    this.targetDir = targetDir;
+    this.targetDir = resolve(targetDir);
   }
 
   start(): void {
@@ -37,9 +37,14 @@ export class FileWatcher extends EventEmitter {
       ignoreInitial: true,
     });
 
+    this.watcher.on("ready", () => {
+      this.emit("ready", { dir: this.targetDir });
+    });
+
     this.watcher.on("add", (path) => this.handleChange("add", path));
     this.watcher.on("change", (path) => this.handleChange("change", path));
     this.watcher.on("unlink", (path) => this.handleChange("unlink", path));
+    this.watcher.on("error", (err) => this.emit("error", err));
 
     this.emit("started", { dir: this.targetDir });
   }
